@@ -103,6 +103,26 @@ select pg_table_size('aocssizetest') > pg_relation_size('aocssizetest');
 select pg_total_relation_size('aocssizetest') between 1500000 and 3000000; -- 1884456
 select pg_total_relation_size('aocssizetest') = pg_table_size('aocssizetest');
 
+-- Test on AOCO tables with bloat, and with auxiliary tables included.  Check both physical and
+-- logical size
+CREATE TABLE aocssizetest2 (a int, col1 int, col2 text) WITH (appendonly=true, orientation=column);
+INSERT INTO aocssizetest2 SELECT g, g, 'x' || g FROM generate_series(1, 100000) g;
+select pg_relation_size('aocssizetest2', false, true) between 1000000 and 2000000; -- 1491200 
+select pg_relation_size('aocssizetest2', true, true) > pg_relation_size('aocssizetest2', false, true); 
+select pg_relation_size('aocssizetest2', true, true) = pg_relation_size('aocssizetest2', true, false); 
+select pg_table_size('aocssizetest2') between 1000000 and 2000000; -- 1720576 
+select pg_table_size('aocssizetest2') > pg_relation_size('aocssizetest2', true, true); 
+select pg_total_relation_size('aocssizetest2') = pg_table_size('aocssizetest2');
+BEGIN;
+INSERT INTO aocssizetest2 SELECT g, g, 'x' || g FROM generate_series(1, 100000) g;
+END;
+select pg_relation_size('aocssizetest2', false, true) between 2500000 and 3500000; -- 2982400
+select pg_relation_size('aocssizetest2', false, false) between 2500000 and 3500000; -- 2982400
+select pg_relation_size('aocssizetest2', true, true) > pg_relation_size('aocssizetest2', false, true); 
+select pg_table_size('aocssizetest2') between 2500000 and 3500000; -- 3015168
+select pg_table_size('aocssizetest2') > pg_relation_size('aocssizetest2', true, true); 
+select pg_total_relation_size('aocssizetest2') = pg_table_size('aocssizetest2');
+
 -- Test when the auxiliary relation of AO table is corrupted, the database will not PANIC.
 create table ao_with_malformed_visimaprelid (a int) with (appendonly=true);
 -- Set visimaprelid record in the pg_appendonly table to a malformed value.
@@ -141,4 +161,5 @@ from
 select count(distinct a) from heapsizetest_size;
 
 drop table heapsizetest_size;
+DROP TABLE aocssizetest2;
 

@@ -316,6 +316,87 @@ select pg_total_relation_size('aocssizetest') = pg_table_size('aocssizetest');
  t
 (1 row)
 
+-- Test on AOCO tables with bloat, and with auxiliary tables included.  Check both physical and
+-- logical size
+CREATE TABLE aocssizetest2 (a int, col1 int, col2 text) WITH (appendonly=true, orientation=column);
+NOTICE:  Table doesn't have 'DISTRIBUTED BY' clause -- Using column named 'a' as the Greenplum Database data distribution key for this table.
+HINT:  The 'DISTRIBUTED BY' clause determines the distribution of data. Make sure column(s) chosen are the optimal data distribution key to minimize skew.
+INSERT INTO aocssizetest2 SELECT g, g, 'x' || g FROM generate_series(1, 100000) g;
+select pg_relation_size('aocssizetest2', false, true) between 1000000 and 2000000; -- 1491200 
+ ?column? 
+----------
+ t
+(1 row)
+
+select pg_relation_size('aocssizetest2', true, true) > pg_relation_size('aocssizetest2', false, true); 
+ ?column? 
+----------
+ t
+(1 row)
+
+select pg_relation_size('aocssizetest2', true, true) = pg_relation_size('aocssizetest2', true, false); 
+ ?column? 
+----------
+ f
+(1 row)
+
+select pg_table_size('aocssizetest2') between 1000000 and 2000000; -- 1720576 
+ ?column? 
+----------
+ t
+(1 row)
+
+select pg_table_size('aocssizetest2') > pg_relation_size('aocssizetest2', true, true); 
+ ?column? 
+----------
+ t
+(1 row)
+
+select pg_total_relation_size('aocssizetest2') = pg_table_size('aocssizetest2');
+ ?column? 
+----------
+ t
+(1 row)
+
+BEGIN;
+INSERT INTO aocssizetest2 SELECT g, g, 'x' || g FROM generate_series(1, 100000) g;
+END;
+select pg_relation_size('aocssizetest2', false, true) between 2500000 and 3500000; -- 2982400
+ ?column? 
+----------
+ t
+(1 row)
+
+select pg_relation_size('aocssizetest2', false, false) between 2500000 and 3500000; -- 2982400
+ ?column? 
+----------
+ t
+(1 row)
+
+select pg_relation_size('aocssizetest2', true, true) > pg_relation_size('aocssizetest2', false, true); 
+ ?column? 
+----------
+ t
+(1 row)
+
+select pg_table_size('aocssizetest2') between 2500000 and 3500000; -- 3015168
+ ?column? 
+----------
+ t
+(1 row)
+
+select pg_table_size('aocssizetest2') > pg_relation_size('aocssizetest2', true, true); 
+ ?column? 
+----------
+ t
+(1 row)
+
+select pg_total_relation_size('aocssizetest2') = pg_table_size('aocssizetest2');
+ ?column? 
+----------
+ t
+(1 row)
+
 -- Test when the auxiliary relation of AO table is corrupted, the database will not PANIC.
 create table ao_with_malformed_visimaprelid (a int) with (appendonly=true);
 NOTICE:  Table doesn't have 'DISTRIBUTED BY' clause -- Using column named 'a' as the Greenplum Database data distribution key for this table.
@@ -366,3 +447,4 @@ select count(distinct a) from heapsizetest_size;
 (1 row)
 
 drop table heapsizetest_size;
+DROP TABLE aocssizetest2;
