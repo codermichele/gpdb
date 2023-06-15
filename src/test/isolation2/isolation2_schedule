@@ -250,6 +250,7 @@ test: enable_autovacuum
 test: idle_gang_cleaner
 # test idle_in_transaction_session_timeout
 
+test: ao_relation_size
 test: ao_index_build_progress
 test: analyze_progress
 test: appendonly_analyze_progress

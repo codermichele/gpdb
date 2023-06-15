@@ -2064,12 +2064,13 @@ AcquireNumberOfBlocks(Relation onerel)
 
 		if (RelationStorageIsAO(onerel))
 			/* 
-			 * For AO tables, we want to consider only the core relation, no auxiliary tables.  We
-			 * also want to pull the logical size, not physical, to most accurately inform
-			 * optimizer and other consumers of these statistics.
+			 * For AO tables, we want to consider only the core relation, no auxiliary tables.
+			 * We also want to pull the logical size (based on the seg eof values),
+			 * not physical, to most accurately inform optimizer and
+			 * other consumers of these statistics.
 			 */
 			snprintf(relsize_sql, sizeof(relsize_sql),
-					"select pg_catalog.pg_relation_size(%u, false, false)", RelationGetRelid(onerel));
+					"select pg_catalog.pg_relation_size(%u, /* include_ao_aux */ false, /* physical_ao_size */ false)", RelationGetRelid(onerel));
 		else
 			snprintf(relsize_sql, sizeof(relsize_sql),
 					"select pg_catalog.pg_relation_size(%u, 'main')", RelationGetRelid(onerel));

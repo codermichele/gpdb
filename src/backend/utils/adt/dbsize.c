@@ -414,7 +414,7 @@ stat_ao_callback(const int segno, void *ctx)
 		sprintf(segPathSuffixPosition, ".%u", segno);
 	else
 		*segPathSuffixPosition = '\0';
-
+	CHECK_FOR_INTERRUPTS();
 
 	if (stat(segPath, &fst) < 0)
 	{
@@ -428,6 +428,46 @@ stat_ao_callback(const int segno, void *ctx)
 	statFiles->totalFilesSize += fst.st_size;
 	return true;
 }
+
+
+/*
+ * Returns the size of all aux relations and their indexes for an AO/CO table
+ */
+static int64
+calculate_total_ao_aux_size(Relation rel)
+{
+	Oid auxRelIds[3];
+	GetAppendOnlyEntryAuxOids(rel, &auxRelIds[0], &auxRelIds[1],
+							  &auxRelIds[2]);
+	int64 auxTotalSize = 0;
+
+	for (int i = 0; i < 3; i++) {
+		Relation auxRel;
+
+		if (!OidIsValid(auxRelIds[i]))
+			continue;
+
+		if ((auxRel = try_relation_open(auxRelIds[i], AccessShareLock,
+										false)) != NULL)
+		{
+			auxTotalSize += calculate_total_relation_size(auxRel);
+			relation_close(auxRel, AccessShareLock);
+		}
+		else
+		{
+			/*
+			* This error may occur when the auxiliary relations' records of
+			* the appendonly table are corrupted.
+			*/
+			elog(ERROR,
+				 "invalid auxiliary relation oid %u for appendonly relation "
+				 "'%s'",
+				 auxRelIds[i], rel->rd_rel->relname.data);
+		}
+	}
+	return auxTotalSize;
+}
+
 
 static int64
 calculate_ao_relation_physical_size(Relation rel, ForkNumber forknum, bool include_ao_aux)
@@ -464,36 +504,9 @@ calculate_ao_relation_physical_size(Relation rel, ForkNumber forknum, bool inclu
 	 * as appropriate, and the pg_relation_size function has a signature
 	 * that will allow the user to include or exclude these as desired.
 	 */
-	if (include_ao_aux) {
-		Oid auxRelIds[3];
-		GetAppendOnlyEntryAuxOids(rel, &auxRelIds[0], &auxRelIds[1],
-									&auxRelIds[2]);
+	if (include_ao_aux)
+		statFiles.totalFilesSize += calculate_total_ao_aux_size(rel);
 
-		for (int i = 0; i < 3; i++) {
-			Relation auxRel;
-
-			if (!OidIsValid(auxRelIds[i]))
-				continue;
-
-			if ((auxRel = try_relation_open(auxRelIds[i], AccessShareLock,
-											false)) != NULL)
-			{
-				statFiles.totalFilesSize += calculate_total_relation_size(auxRel);
-				relation_close(auxRel, AccessShareLock);
-			}
-			else
-			{
-				/*
-				* This error may occur when the auxiliary relations' records of
-				* the appendonly table are corrupted.
-				*/
-				elog(ERROR,
-					"invalid auxiliary relation oid %u for appendonly relation "
-					"'%s'",
-					auxRelIds[i], rel->rd_rel->relname.data);
-			}
-		}
-	}
 	pfree(segPath);
 	pfree(basepath);
 	return statFiles.totalFilesSize;
@@ -509,9 +522,14 @@ calculate_ao_relation_physical_size(Relation rel, ForkNumber forknum, bool inclu
  *
  * Note: we can safely apply this to temp tables of other sessions, so there
  * is no check here or at the call sites for that.
+ *
+ * GPDB: We add the following args that control the behavior only for AO/CO tables:
+ * 'include_ao_aux': Include aux tables (and their indexes) in size calculation
+ * 'ao_physical_size': Calculate physical size on disk as opposed to
+ * logical size based on segment eofs.
  */
 static int64
-calculate_relation_size(Relation rel, ForkNumber forknum, bool include_ao_aux, bool physical_size)
+calculate_relation_size(Relation rel, ForkNumber forknum, bool include_ao_aux, bool ao_physical_size)
 {
 	int64		totalsize = 0;
 	char	   *relationpath;
@@ -525,7 +543,7 @@ calculate_relation_size(Relation rel, ForkNumber forknum, bool include_ao_aux, b
    */
 	if (RelationStorageIsAO(rel))
 	{
-		if (physical_size)
+		if (ao_physical_size)
 			return calculate_ao_relation_physical_size(rel, forknum, include_ao_aux);
 		else
 			return table_relation_size(rel, forknum);
@@ -577,6 +595,7 @@ pg_relation_size(PG_FUNCTION_ARGS)
 	int64		size = 0;
 	bool		include_ao_aux;
 	bool		physical_ao_size;
+	bool        with_bool_ao_args = false;
 
 	if (get_fn_expr_argtype(fcinfo->flinfo, 1) == BOOLOID)
 	{
@@ -594,7 +613,8 @@ pg_relation_size(PG_FUNCTION_ARGS)
 		 */
 		include_ao_aux = PG_GETARG_BOOL(1);
 		physical_ao_size = PG_GETARG_BOOL(2);
-		forkName = cstring_to_text("main\0");
+		forkName = cstring_to_text("main");
+		with_bool_ao_args = true;
 	}
 	else {
 		include_ao_aux = false;
@@ -645,8 +665,13 @@ pg_relation_size(PG_FUNCTION_ARGS)
 	{
 		char	   *sql;
 
-		sql = psprintf("select pg_catalog.pg_relation_size(%u, '%s')", relOid,
-					   forkNames[forkNumber]);
+		if (with_bool_ao_args)
+			sql = psprintf("select pg_catalog.pg_relation_size(%u, '%s', '%s')", relOid,
+						   include_ao_aux ? "true" : "false",
+						   physical_ao_size ? "true" : "false");
+		else
+			sql = psprintf("select pg_catalog.pg_relation_size(%u, '%s')", relOid,
+						   forkNames[forkNumber]);
 
 		size += get_size_from_segDBs(sql);
 	}
@@ -673,7 +698,10 @@ calculate_toast_table_size(Oid toastrelid)
 
 	/* toast heap size, including FSM and VM size */
 	for (forkNum = 0; forkNum <= MAX_FORKNUM; forkNum++)
-		size += calculate_relation_size(toastRel, forkNum, false, false);
+		size += calculate_relation_size(toastRel,
+										forkNum,
+										/* include_ao_aux */ false,
+										/* physical_ao_size */ false);
 
 	/* toast index size, including FSM and VM size */
 	indexlist = RelationGetIndexList(toastRel);
@@ -686,7 +714,10 @@ calculate_toast_table_size(Oid toastrelid)
 		toastIdxRel = relation_open(lfirst_oid(lc),
 									AccessShareLock);
 		for (forkNum = 0; forkNum <= MAX_FORKNUM; forkNum++)
-			size += calculate_relation_size(toastIdxRel, forkNum, false, false);
+			size += calculate_relation_size(toastIdxRel,
+											forkNum,
+											/* include_ao_aux */ false,
+											/* physical_ao_size */ false);
 
 		relation_close(toastIdxRel, AccessShareLock);
 	}
@@ -720,7 +751,10 @@ calculate_table_size(Relation rel)
 	if (rel->rd_node.relNode != 0)
 	{
 		for (forkNum = 0; forkNum <= MAX_FORKNUM; forkNum++)
-			size += calculate_relation_size(rel, forkNum, true, true);
+			size += calculate_relation_size(rel,
+											forkNum,
+											/* include_ao_aux */ true,
+											/* physical_ao_size */ true);
 	}
 
 	/*
@@ -761,7 +795,10 @@ calculate_indexes_size(Relation rel)
 			if (RelationIsValid(idxRel))
 			{
 				for (forkNum = 0; forkNum <= MAX_FORKNUM; forkNum++)
-					size += calculate_relation_size(idxRel, forkNum, false, false);
+					size += calculate_relation_size(idxRel,
+													forkNum,
+													/* include_ao_aux */ false,
+													/* physical_ao_size */ false);
 
 				relation_close(idxRel, AccessShareLock);
 			}

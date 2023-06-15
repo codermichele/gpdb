@@ -67,60 +67,93 @@ insert into heapsizetest select generate_series(1, 100000);
 vacuum heapsizetest;
 
 -- Check that the values are in an expected ranges.
-select pg_relation_size('heapsizetest') between 3000000 and 5000000; -- 3637248
-select pg_relation_size('heapsizetest', 'fsm') between 250000 and 350000; -- 294912
-select pg_table_size('heapsizetest') between 3000000 and 5000000; -- 4030464
+select pg_relation_size('heapsizetest') between 3000000 and 5000000;
+-- 3637248
+select pg_relation_size('heapsizetest', 'fsm') between 250000 and 350000;
+-- 294912
+select pg_table_size('heapsizetest') between 3000000 and 5000000;
+-- 4030464
 select pg_table_size('heapsizetest') > pg_relation_size('heapsizetest');
 select pg_indexes_size('heapsizetest');
-select pg_total_relation_size('heapsizetest') between 3000000 and 5000000; -- 4030464
+select pg_total_relation_size('heapsizetest') between 3000000 and 5000000;
+-- 4030464
 select pg_total_relation_size('heapsizetest') = pg_table_size('heapsizetest');
 
 -- Now also indexes
 create index on heapsizetest(a);
 
-select pg_relation_size('heapsizetest') between 3000000 and 5000000; -- 3637248
-select pg_table_size('heapsizetest') between 3000000 and 5000000; -- 4030464
-select pg_indexes_size('heapsizetest') between 2000000 and 3000000; -- 2490368
-select pg_total_relation_size('heapsizetest') between 6000000 and 7000000; -- 6520832
+select pg_relation_size('heapsizetest') between 3000000 and 5000000;
+-- 3637248
+select pg_table_size('heapsizetest') between 3000000 and 5000000;
+-- 4030464
+select pg_indexes_size('heapsizetest') between 2000000 and 3000000;
+-- 2490368
+select pg_total_relation_size('heapsizetest') between 6000000 and 7000000;
+-- 6520832
 select pg_total_relation_size('heapsizetest') = pg_table_size('heapsizetest') + pg_indexes_size('heapsizetest');
 
 -- Test on AO and AOCS tables
 CREATE TABLE aosizetest (a int) WITH (appendonly=true, orientation=row);
 insert into aosizetest select generate_series(1, 100000);
-select pg_relation_size('aosizetest') between 750000 and 1500000; -- 1001648
-select pg_relation_size('aosizetest', 'fsm'); -- 0
-select pg_table_size('aosizetest') between 1000000 and 1500000; -- 1263792
+select pg_relation_size('aosizetest') between 750000 and 1500000;
+-- 1001648
+select pg_relation_size('aosizetest', 'fsm');
+-- 0
+select pg_table_size('aosizetest') between 1000000 and 1500000;
+-- 1263792
 select pg_table_size('aosizetest') > pg_relation_size('aosizetest');
-select pg_total_relation_size('aosizetest') between 1000000 and 1500000; -- 1263792
+select pg_total_relation_size('aosizetest') between 1000000 and 1500000;
+-- 1263792
+select pg_total_relation_size('aosizetest') = pg_table_size('aosizetest');
+BEGIN;
+INSERT INTO aosizetest select generate_series(1, 100000);
+ABORT;
+select pg_relation_size('aosizetest', /* include_ao_aux */ false, /* physical_ao_size */ true) between 2000000 and 2500000;
+-- 2003280
+select pg_relation_size('aosizetest', /* include_ao_aux */ false, /* physical_ao_size */ false) between 1000000 and 1500000;
+-- 1001640
+select pg_relation_size('aosizetest', /* include_ao_aux */ true, /* physical_ao_size */ true) > pg_relation_size('aosizetest', /* include_ao_aux */ false, /* physical_ao_size */ true);
+select pg_table_size('aosizetest') between 2000000 and 2500000;
+-- 2232656
+select pg_table_size('aosizetest') = pg_relation_size('aosizetest', /* include_ao_aux */ true, /* physical_ao_size */ true);
 select pg_total_relation_size('aosizetest') = pg_table_size('aosizetest');
 
 CREATE TABLE aocssizetest (a int, col1 int, col2 text) WITH (appendonly=true, orientation=column);
 insert into aocssizetest select g, g, 'x' || g from generate_series(1, 100000) g;
-select pg_relation_size('aocssizetest') between 1000000 and 2000000; -- 1491240
-select pg_relation_size('aocssizetest', 'fsm'); -- 0
-select pg_table_size('aocssizetest') between 1500000 and 3000000; -- 1884456
+select pg_relation_size('aocssizetest') between 1000000 and 2000000;
+-- 1491240
+select pg_relation_size('aocssizetest', 'fsm');
+-- 0
+select pg_table_size('aocssizetest') between 1500000 and 3000000;
+-- 1884456
 select pg_table_size('aocssizetest') > pg_relation_size('aocssizetest');
-select pg_total_relation_size('aocssizetest') between 1500000 and 3000000; -- 1884456
+select pg_total_relation_size('aocssizetest') between 1500000 and 3000000;
+-- 1884456
 select pg_total_relation_size('aocssizetest') = pg_table_size('aocssizetest');
 
 -- Test on AOCO tables with bloat, and with auxiliary tables included.  Check both physical and
 -- logical size
 CREATE TABLE aocssizetest2 (a int, col1 int, col2 text) WITH (appendonly=true, orientation=column);
 INSERT INTO aocssizetest2 SELECT g, g, 'x' || g FROM generate_series(1, 100000) g;
-select pg_relation_size('aocssizetest2', false, true) between 1000000 and 2000000; -- 1491200 
-select pg_relation_size('aocssizetest2', true, true) > pg_relation_size('aocssizetest2', false, true); 
-select pg_relation_size('aocssizetest2', true, true) = pg_relation_size('aocssizetest2', true, false); 
-select pg_table_size('aocssizetest2') between 1000000 and 2000000; -- 1720576 
-select pg_table_size('aocssizetest2') > pg_relation_size('aocssizetest2', true, true); 
+select pg_relation_size('aocssizetest2', /* include_ao_aux */ false, /* physical_ao_size */ true) between 1000000 and 2000000;
+-- 1491200
+select pg_relation_size('aocssizetest2', /* include_ao_aux */ true, /* physical_ao_size */ true) > pg_relation_size('aocssizetest2', /* include_ao_aux */ false, /* physical_ao_size */ true);
+select pg_relation_size('aocssizetest2', /* include_ao_aux */ true, /* physical_ao_size */ true) = pg_relation_size('aocssizetest2', /* include_ao_aux */ true, /* physical_ao_size */ false);
+select pg_table_size('aocssizetest2') between 1000000 and 2000000;
+-- 1720576
+select pg_table_size('aocssizetest2') = pg_relation_size('aocssizetest2', /* include_ao_aux */ true, /* physical_ao_size */ true);
 select pg_total_relation_size('aocssizetest2') = pg_table_size('aocssizetest2');
 BEGIN;
 INSERT INTO aocssizetest2 SELECT g, g, 'x' || g FROM generate_series(1, 100000) g;
-END;
-select pg_relation_size('aocssizetest2', false, true) between 2500000 and 3500000; -- 2982400
-select pg_relation_size('aocssizetest2', false, false) between 2500000 and 3500000; -- 2982400
-select pg_relation_size('aocssizetest2', true, true) > pg_relation_size('aocssizetest2', false, true); 
-select pg_table_size('aocssizetest2') between 2500000 and 3500000; -- 3015168
-select pg_table_size('aocssizetest2') > pg_relation_size('aocssizetest2', true, true); 
+ABORT;
+select pg_relation_size('aocssizetest2', /* include_ao_aux */ false, /* physical_ao_size */ true) between 2500000 and 3500000;
+-- 2982400
+select pg_relation_size('aocssizetest2', /* include_ao_aux */ false, /* physical_ao_size */ false) between 1000000 and 2000000;
+-- 1491200
+select pg_relation_size('aocssizetest2', /* include_ao_aux */ true, /* physical_ao_size */ true) > pg_relation_size('aocssizetest2', /* include_ao_aux */ false, /* physical_ao_size */ true);
+select pg_table_size('aocssizetest2') between 2500000 and 3500000;
+-- 3015168
+select pg_table_size('aocssizetest2') = pg_relation_size('aocssizetest2', /* include_ao_aux */ true, /* physical_ao_size */ true);
 select pg_total_relation_size('aocssizetest2') = pg_table_size('aocssizetest2');
 
 -- Test when the auxiliary relation of AO table is corrupted, the database will not PANIC.
@@ -137,7 +170,8 @@ drop table ao_with_malformed_visimaprelid;
 -- very typical way to use the functions, so make sure it works. (A
 -- plausible difference to the above scenarios would be that the function
 -- might get executed on different nodes, for example.)
-select pg_relation_size(oid) between 3000000 and 5000000 from pg_class where relname = 'heapsizetest'; -- 3637248
+select pg_relation_size(oid) between 3000000 and 5000000 from pg_class where relname = 'heapsizetest';
+-- 3637248
 
 create table heapsizetest_size(a bigint);
 
