@@ -43,6 +43,8 @@ CREATE ROLE
 CREATE EXTENSION IF NOT EXISTS gp_inject_fault;
 CREATE EXTENSION
 
+
+
 -- test1: cannot move IDLE sessions
 1: SET ROLE role_move_query;
 SET
